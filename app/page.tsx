@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { PoseLandmarker, FilesetResolver, DrawingUtils } from '@mediapipe/tasks-vision';
+import { HandLandmarker, FilesetResolver, DrawingUtils } from '@mediapipe/tasks-vision';
 
 export default function Home() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -9,41 +9,40 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [wingspan, setWingspan] = useState<number | null>(null);
-  const [distance, setDistance] = useState<number | null>(null);
-  const [poseLandmarker, setPoseLandmarker] = useState<PoseLandmarker | null>(null);
+  const [handLandmarker, setHandLandmarker] = useState<HandLandmarker | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   
-  // Average shoulder width in cm (typical adult range: 38-45cm)
-  // This is used to calculate the user's distance from the camera
-  const ASSUMED_SHOULDER_WIDTH_CM = 45;
+  // Fixed distance from camera in cm
+  const CAMERA_DISTANCE = 150;
 
-  // Initialize MediaPipe PoseLandmarker
+  // Initialize MediaPipe HandLandmarker
   useEffect(() => {
-    const initializePoseLandmarker = async () => {
+    const initializeHandLandmarker = async () => {
       try {
         const vision = await FilesetResolver.forVisionTasks(
           'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm'
         );
         
-        const landmarker = await PoseLandmarker.createFromOptions(vision, {
+        const landmarker = await HandLandmarker.createFromOptions(vision, {
           baseOptions: {
-            modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/1/pose_landmarker_heavy.task',
+            modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
             delegate: 'GPU'
           },
           runningMode: 'VIDEO',
-          minPoseDetectionConfidence: 0.5,
-          minPosePresenceConfidence: 0.5,
+          numHands: 4,
+          minHandDetectionConfidence: 0.5,
+          minHandPresenceConfidence: 0.5,
           minTrackingConfidence: 0.5
         });
         
-        setPoseLandmarker(landmarker);
+        setHandLandmarker(landmarker);
       } catch (err) {
-        console.error('Error initializing PoseLandmarker:', err);
-        setError('Failed to initialize pose tracking.');
+        console.error('Error initializing HandLandmarker:', err);
+        setError('Failed to initialize hand tracking.');
       }
     };
 
-    initializePoseLandmarker();
+    initializeHandLandmarker();
   }, []);
 
   // Start camera
@@ -86,9 +85,9 @@ export default function Home() {
     };
   }, []);
 
-  // Pose detection loop
+  // Hand detection loop
   useEffect(() => {
-    if (!poseLandmarker || !videoRef.current || !canvasRef.current) return;
+    if (!handLandmarker || !videoRef.current || !canvasRef.current) return;
 
     const video = videoRef.current;
     const canvas = canvasRef.current;
@@ -96,11 +95,10 @@ export default function Home() {
     if (!ctx) return;
 
     let lastVideoTime = -1;
-    const startTimeMs = performance.now();
 
-    const detectPose = async () => {
+    const detectHands = async () => {
       if (!video || video.paused || video.ended) {
-        animationFrameRef.current = requestAnimationFrame(detectPose);
+        animationFrameRef.current = requestAnimationFrame(detectHands);
         return;
       }
 
@@ -112,108 +110,89 @@ export default function Home() {
       if (currentTime !== lastVideoTime) {
         lastVideoTime = currentTime;
 
-        // Calculate timestamp in milliseconds from start
-        const timeMs = performance.now() - startTimeMs;
-        
-        // Detect pose
-        const results = poseLandmarker.detectForVideo(video, timeMs);
+        // Detect hands
+        const results = handLandmarker.detectForVideo(video, Date.now());
 
         // Clear canvas
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // Draw pose landmarks
-        if (results.landmarks && results.landmarks.length > 0) {
+        // Draw hand landmarks
+        if (results.landmarks) {
           const drawingUtils = new DrawingUtils(ctx);
-          const landmarks = results.landmarks[0];
 
-          // Draw pose connections
+          for (const landmarks of results.landmarks) {
             drawingUtils.drawConnectors(
               landmarks,
-            PoseLandmarker.POSE_CONNECTIONS,
-            { color: '#00FF00', lineWidth: 4 }
+              HandLandmarker.HAND_CONNECTIONS,
+              { color: '#00FF00', lineWidth: 5 }
             );
             drawingUtils.drawLandmarks(landmarks, {
               color: '#FF0000',
               lineWidth: 2,
-            radius: 4
-          });
+              radius: 5
+            });
+          }
 
-          // MediaPipe Pose landmark indices:
-          // 11 = Left Shoulder, 12 = Right Shoulder
-          // 15 = Left Wrist, 16 = Right Wrist
-          const leftShoulder = landmarks[11];
-          const rightShoulder = landmarks[12];
-          const leftWrist = landmarks[15];
-          const rightWrist = landmarks[16];
+          // Calculate wingspan if two hands are detected
+          if (results.landmarks.length === 2) {
+            const hand1 = results.landmarks[0];
+            const hand2 = results.landmarks[1];
 
-          // Calculate shoulder width in pixels
-          const shoulderDx = (rightShoulder.x - leftShoulder.x) * canvas.width;
-          const shoulderDy = (rightShoulder.y - leftShoulder.y) * canvas.height;
-          const shoulderWidthPixels = Math.sqrt(shoulderDx * shoulderDx + shoulderDy * shoulderDy);
+            // Use index finger tip landmarks (index 8) for wingspan measurement
+            const indexFinger1 = hand1[8];
+            const indexFinger2 = hand2[8];
 
-          // Calculate camera distance using the known shoulder width
+            // Calculate horizontal distance in pixels
+            const dx = (indexFinger2.x - indexFinger1.x) * canvas.width;
+            const dy = (indexFinger2.y - indexFinger1.y) * canvas.height;
+            
+            const distancePixels = Math.sqrt(dx * dx + dy * dy);
+            
+            // Calculate pixel-to-cm ratio at fixed camera distance
             // Typical webcam has ~70° horizontal FOV
+            // At 180cm distance, FOV width = 2 * 165 * tan(35°) ≈ 231 cm
             const fovDegrees = 70;
-          
-          // Using similar triangles:
-          // real_width / distance = pixel_width / focal_length
-          // focal_length (in pixels) = canvas_width / (2 * tan(fov/2))
-          const focalLengthPixels = canvas.width / (2 * Math.tan((fovDegrees / 2) * (Math.PI / 180)));
-          
-          // Calculate distance: distance = (real_width * focal_length) / pixel_width
-          const calculatedDistance = (ASSUMED_SHOULDER_WIDTH_CM * focalLengthPixels) / shoulderWidthPixels;
-          setDistance(calculatedDistance);
-
-          // Calculate wingspan using the calculated distance
-          const wristDx = (rightWrist.x - leftWrist.x) * canvas.width;
-          const wristDy = (rightWrist.y - leftWrist.y) * canvas.height;
-          const wingspanPixels = Math.sqrt(wristDx * wristDx + wristDy * wristDy);
-          
-          // Convert wingspan pixels to cm using the calculated distance
-          const wingspanCm = (wingspanPixels * calculatedDistance) / focalLengthPixels;
+            const fovWidthCm = 2 * CAMERA_DISTANCE * Math.tan((fovDegrees / 2) * (Math.PI / 180));
+            const pixelToCmRatio = fovWidthCm / canvas.width;
+            
+            // Convert pixels to real-world distance
+            const wingspanCm = distancePixels * pixelToCmRatio;
+            
             setWingspan(wingspanCm);
 
-            // Draw line between wrists to show wingspan
+            // Draw line between index finger tips to show wingspan
             ctx.beginPath();
-          ctx.moveTo(leftWrist.x * canvas.width, leftWrist.y * canvas.height);
-          ctx.lineTo(rightWrist.x * canvas.width, rightWrist.y * canvas.height);
+            ctx.moveTo(indexFinger1.x * canvas.width, indexFinger1.y * canvas.height);
+            ctx.lineTo(indexFinger2.x * canvas.width, indexFinger2.y * canvas.height);
             ctx.strokeStyle = '#FFFF00';
-          ctx.lineWidth = 5;
+            ctx.lineWidth = 4;
             ctx.stroke();
             
-            // Draw circles at wrists
+            // Draw circles at index finger tips
             ctx.fillStyle = '#FFFF00';
             ctx.beginPath();
-          ctx.arc(leftWrist.x * canvas.width, leftWrist.y * canvas.height, 10, 0, 2 * Math.PI);
+            ctx.arc(indexFinger1.x * canvas.width, indexFinger1.y * canvas.height, 8, 0, 2 * Math.PI);
             ctx.fill();
             ctx.beginPath();
-          ctx.arc(rightWrist.x * canvas.width, rightWrist.y * canvas.height, 10, 0, 2 * Math.PI);
+            ctx.arc(indexFinger2.x * canvas.width, indexFinger2.y * canvas.height, 8, 0, 2 * Math.PI);
             ctx.fill();
-
-          // Draw line between shoulders for reference
-          ctx.beginPath();
-          ctx.moveTo(leftShoulder.x * canvas.width, leftShoulder.y * canvas.height);
-          ctx.lineTo(rightShoulder.x * canvas.width, rightShoulder.y * canvas.height);
-          ctx.strokeStyle = '#00FFFF';
-          ctx.lineWidth = 3;
-          ctx.stroke();
           } else {
             setWingspan(null);
-          setDistance(null);
+          }
         }
       }
 
-      animationFrameRef.current = requestAnimationFrame(detectPose);
+      animationFrameRef.current = requestAnimationFrame(detectHands);
     };
 
-    detectPose();
+    detectHands();
 
     return () => {
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [poseLandmarker, ASSUMED_SHOULDER_WIDTH_CM]);
+  }, [handLandmarker]);
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-gray-900 p-4">
@@ -223,13 +202,13 @@ export default function Home() {
         </h1>
         
         <div className="text-center mb-4 text-sm text-blue-300 bg-blue-900/30 rounded-lg p-3">
-          📏 Face the camera and extend both arms horizontally. Distance is calculated automatically!
+          📏 Stand 180cm away from the camera and extend both arms horizontally
         </div>
         
         <div className="relative bg-black rounded-lg overflow-hidden shadow-2xl">
           {isLoading && (
             <div className="absolute inset-0 flex items-center justify-center bg-gray-800 z-10">
-              <div className="text-white text-xl">Loading camera and pose tracking model...</div>
+              <div className="text-white text-xl">Loading camera and hand tracking model...</div>
             </div>
           )}
           
@@ -252,42 +231,22 @@ export default function Home() {
           />
         </div>
 
-        <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="p-6 bg-gray-800 rounded-lg">
+        <div className="mt-6 p-6 bg-gray-800 rounded-lg">
+          <div className="flex flex-col items-center space-y-4">
             <div className="text-center">
-              <h2 className="text-xl font-semibold text-white mb-3">Distance from Camera</h2>
-              {distance !== null ? (
-                <div>
-                  <div className="text-4xl font-bold text-cyan-400 mb-1">
-                    {distance.toFixed(0)} cm
-                  </div>
-                  <div className="text-lg text-cyan-300">
-                    {(distance / 100).toFixed(2)} meters
-                  </div>
-                </div>
-              ) : (
-                <div className="text-lg text-gray-400">
-                  Face the camera to calculate distance
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="p-6 bg-gray-800 rounded-lg">
-            <div className="text-center">
-              <h2 className="text-xl font-semibold text-white mb-3">Your Wingspan</h2>
+              <h2 className="text-2xl font-semibold text-white mb-3">Your Wingspan</h2>
               {wingspan !== null ? (
                 <div>
-                  <div className="text-4xl font-bold text-green-400 mb-1">
+                  <div className="text-6xl font-bold text-green-400 mb-2">
                     {wingspan.toFixed(1)} cm
                   </div>
-                  <div className="text-lg text-green-300">
+                  <div className="text-2xl text-green-300">
                     {(wingspan / 100).toFixed(2)} meters
                   </div>
                 </div>
               ) : (
-                <div className="text-lg text-gray-400">
-                  Extend both arms horizontally
+                <div className="text-2xl text-gray-400">
+                  Extend both arms horizontally to measure wingspan
                 </div>
               )}
             </div>
