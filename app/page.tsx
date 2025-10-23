@@ -138,13 +138,13 @@ export default function Home() {
             const hand1 = results.landmarks[0];
             const hand2 = results.landmarks[1];
 
-            // Use index finger tip landmarks (index 8) for wingspan measurement
-            const indexFinger1 = hand1[8];
-            const indexFinger2 = hand2[8];
+            // Use middle finger tip landmarks (index 12) for wingspan measurement
+            const middleFinger1 = hand1[12];
+            const middleFinger2 = hand2[12];
 
             // Calculate horizontal distance in pixels
-            const dx = (indexFinger2.x - indexFinger1.x) * canvas.width;
-            const dy = (indexFinger2.y - indexFinger1.y) * canvas.height;
+            const dx = (middleFinger2.x - middleFinger1.x) * canvas.width;
+            const dy = (middleFinger2.y - middleFinger1.y) * canvas.height;
             
             const distancePixels = Math.sqrt(dx * dx + dy * dy);
             
@@ -160,21 +160,21 @@ export default function Home() {
             
             setWingspan(wingspanCm);
 
-            // Draw line between index finger tips to show wingspan
+            // Draw line between middle finger tips to show wingspan
             ctx.beginPath();
-            ctx.moveTo(indexFinger1.x * canvas.width, indexFinger1.y * canvas.height);
-            ctx.lineTo(indexFinger2.x * canvas.width, indexFinger2.y * canvas.height);
+            ctx.moveTo(middleFinger1.x * canvas.width, middleFinger1.y * canvas.height);
+            ctx.lineTo(middleFinger2.x * canvas.width, middleFinger2.y * canvas.height);
             ctx.strokeStyle = '#FFFF00';
             ctx.lineWidth = 4;
             ctx.stroke();
             
-            // Draw circles at index finger tips
+            // Draw circles at middle finger tips
             ctx.fillStyle = '#FFFF00';
             ctx.beginPath();
-            ctx.arc(indexFinger1.x * canvas.width, indexFinger1.y * canvas.height, 8, 0, 2 * Math.PI);
+            ctx.arc(middleFinger1.x * canvas.width, middleFinger1.y * canvas.height, 8, 0, 2 * Math.PI);
             ctx.fill();
             ctx.beginPath();
-            ctx.arc(indexFinger2.x * canvas.width, indexFinger2.y * canvas.height, 8, 0, 2 * Math.PI);
+            ctx.arc(middleFinger2.x * canvas.width, middleFinger2.y * canvas.height, 8, 0, 2 * Math.PI);
             ctx.fill();
           } else {
             setWingspan(null);
