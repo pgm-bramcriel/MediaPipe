@@ -8,9 +8,12 @@ export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [distance, setDistance] = useState<number | null>(null);
+  const [wingspan, setWingspan] = useState<number | null>(null);
   const [handLandmarker, setHandLandmarker] = useState<HandLandmarker | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  
+  // Fixed distance from camera in cm
+  const CAMERA_DISTANCE = 180;
 
   // Initialize MediaPipe HandLandmarker
   useEffect(() => {
@@ -130,37 +133,51 @@ export default function Home() {
             });
           }
 
-          // Calculate distance if two hands are detected
+          // Calculate wingspan if two hands are detected
           if (results.landmarks.length === 2) {
             const hand1 = results.landmarks[0];
             const hand2 = results.landmarks[1];
 
-            // Use middle finger tip landmarks (index 12) to calculate distance
-            const finger1 = hand1[12];
-            const finger2 = hand2[12];
+            // Use wrist landmarks (index 0) for wingspan measurement
+            const wrist1 = hand1[0];
+            const wrist2 = hand2[0];
 
-            // Calculate Euclidean distance
-            const dx = (finger2.x - finger1.x) * canvas.width;
-            const dy = (finger2.y - finger1.y) * canvas.height;
-            const dz = (finger2.z - finger1.z) * canvas.width; // z is relative to wrist depth
+            // Calculate horizontal distance in pixels
+            const dx = (wrist2.x - wrist1.x) * canvas.width;
+            const dy = (wrist2.y - wrist1.y) * canvas.height;
             
-            const distancePixels = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            const distancePixels = Math.sqrt(dx * dx + dy * dy);
             
-            // Convert to approximate real-world distance (rough estimation)
-            // Assuming average hand width is about 85mm and video width represents ~500mm at arm's length
-            const distanceCm = (distancePixels / canvas.width) * 50;
+            // Calculate pixel-to-cm ratio at fixed camera distance
+            // Typical webcam has ~70° horizontal FOV
+            // At 180cm distance, FOV width = 2 * 165 * tan(35°) ≈ 231 cm
+            const fovDegrees = 70;
+            const fovWidthCm = 2 * CAMERA_DISTANCE * Math.tan((fovDegrees / 2) * (Math.PI / 180));
+            const pixelToCmRatio = fovWidthCm / canvas.width;
             
-            setDistance(distanceCm);
+            // Convert pixels to real-world distance
+            const wingspanCm = distancePixels * pixelToCmRatio;
+            
+            setWingspan(wingspanCm);
 
-            // Draw line between middle finger tips
+            // Draw line between wrists to show wingspan
             ctx.beginPath();
-            ctx.moveTo(finger1.x * canvas.width, finger1.y * canvas.height);
-            ctx.lineTo(finger2.x * canvas.width, finger2.y * canvas.height);
+            ctx.moveTo(wrist1.x * canvas.width, wrist1.y * canvas.height);
+            ctx.lineTo(wrist2.x * canvas.width, wrist2.y * canvas.height);
             ctx.strokeStyle = '#FFFF00';
-            ctx.lineWidth = 3;
+            ctx.lineWidth = 4;
             ctx.stroke();
+            
+            // Draw circles at wrists
+            ctx.fillStyle = '#FFFF00';
+            ctx.beginPath();
+            ctx.arc(wrist1.x * canvas.width, wrist1.y * canvas.height, 8, 0, 2 * Math.PI);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(wrist2.x * canvas.width, wrist2.y * canvas.height, 8, 0, 2 * Math.PI);
+            ctx.fill();
           } else {
-            setDistance(null);
+            setWingspan(null);
           }
         }
       }
@@ -181,8 +198,12 @@ export default function Home() {
     <div className="flex min-h-screen flex-col items-center justify-center bg-gray-900 p-4">
       <div className="w-full max-w-5xl">
         <h1 className="text-4xl font-bold text-white text-center mb-8">
-          MediaPipe Hand Distance Tracker
+          MediaPipe Wingspan Tracker
         </h1>
+        
+        <div className="text-center mb-4 text-sm text-blue-300 bg-blue-900/30 rounded-lg p-3">
+          📏 Stand 180cm away from the camera and extend both arms horizontally
+        </div>
         
         <div className="relative bg-black rounded-lg overflow-hidden shadow-2xl">
           {isLoading && (
@@ -213,14 +234,19 @@ export default function Home() {
         <div className="mt-6 p-6 bg-gray-800 rounded-lg">
           <div className="flex flex-col items-center space-y-4">
             <div className="text-center">
-              <h2 className="text-xl font-semibold text-white mb-2">Distance Between Middle Fingers</h2>
-              {distance !== null ? (
-                <div className="text-5xl font-bold text-green-400">
-                  {distance.toFixed(1)} cm
+              <h2 className="text-2xl font-semibold text-white mb-3">Your Wingspan</h2>
+              {wingspan !== null ? (
+                <div>
+                  <div className="text-6xl font-bold text-green-400 mb-2">
+                    {wingspan.toFixed(1)} cm
+                  </div>
+                  <div className="text-2xl text-green-300">
+                    {(wingspan / 100).toFixed(2)} meters
+                  </div>
                 </div>
               ) : (
                 <div className="text-2xl text-gray-400">
-                  Show both hands to measure distance
+                  Extend both arms horizontally to measure wingspan
                 </div>
               )}
             </div>

@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "MediaPipe Hand Distance Tracker",
-  description: "Measure distance between hands using MediaPipe and Next.js",
+  title: "MediaPipe Wingspan Tracker",
+  description: "Measure your wingspan using MediaPipe hand tracking and Next.js",
 };
 
 export default function RootLayout({
